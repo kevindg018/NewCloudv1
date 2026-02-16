@@ -218,6 +218,14 @@
             return Date.now().toString(36) + Math.random().toString(36).substr(2);
         }
 
+        function normalizeText(value = '') {
+            return value
+                .toString()
+                .toLowerCase()
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '');
+        }
+
         // --- SISTEMA DE AUTENTICACIÓN ---
         const loginScreen = document.getElementById('login-screen');
         const appLayout = document.getElementById('app-layout');
@@ -488,6 +496,7 @@
     });
 }
                 saveDB();
+                refreshPOSSearchIndex();
                 e.target.reset();
                 showToast('Producto guardado exitosamente');
                 refreshProductConfigUI();
@@ -561,6 +570,7 @@
             if(confirm('¿Seguro que deseas eliminar este producto?')) {
                 db.products = db.products.filter(p => p.id !== id);
                 saveDB();
+                refreshPOSSearchIndex();
                 refreshProductConfigUI();
             }
         }
@@ -569,6 +579,26 @@
         let productEditing = null;
         let currentCart = [];
         let posCategoryFilter = 'Todos';
+        let posSearchTimer = null;
+        const POS_MAX_RENDER_ITEMS = 180;
+        let posProductLookup = new Map();
+        let posSearchIndex = [];
+
+        function refreshPOSSearchIndex() {
+            posProductLookup = new Map();
+            posSearchIndex = db.products.map((p) => {
+                posProductLookup.set(p.id, p);
+                return {
+                    product: p,
+                    normalizedName: normalizeText(p.name),
+                    normalizedCode: normalizeText(p.code),
+                    normalizedBrand: normalizeText(p.brand || ''),
+                    normalizedCategory: normalizeText(p.category || '')
+                };
+            });
+        }
+
+        refreshPOSSearchIndex();
         
         function renderPOS(container) {
             container.innerHTML = `
@@ -608,7 +638,7 @@
                             <!-- Buscador -->
                             <div class="relative">
                                 <i class="fas fa-search absolute left-4 top-3.5 text-slate-500"></i>
-                                <input type="text" id="pos-search" class="w-full bg-slate-800 border border-slate-700 rounded-xl pl-10 p-3 text-slate-200 placeholder-slate-500 focus:ring-2 focus:ring-amber-500" placeholder="Buscar licor, código o marca..." onkeyup="searchPOS(this.value)">
+                                <input type="text" id="pos-search" class="w-full bg-slate-800 border border-slate-700 rounded-xl pl-10 p-3 text-slate-200 placeholder-slate-500 focus:ring-2 focus:ring-amber-500" placeholder="Buscar licor, código o marca...">
                             </div>
 
                             <!-- Grid Productos -->
@@ -651,6 +681,14 @@
                 </div>
             `;
             if(db.caja.isOpen) {
+                const posSearch = document.getElementById('pos-search');
+                if (posSearch) {
+                    posSearch.addEventListener('input', (e) => {
+                        clearTimeout(posSearchTimer);
+                        const value = e.target.value;
+                        posSearchTimer = setTimeout(() => searchPOS(value), 140);
+                    });
+                }
                 searchPOS('');
                 updateCartUI();
             }
@@ -675,16 +713,40 @@
         function searchPOS(query) {
             const list = document.getElementById('pos-product-list');
             if(!list) return;
-            
-            let matches = db.products.filter(p => 
-                (p.name.toLowerCase().includes(query.toLowerCase()) || p.code.includes(query))
-            );
 
-            if(posCategoryFilter !== 'Todos') {
-                matches = matches.filter(p => p.category === posCategoryFilter);
+            const normalizedQuery = normalizeText(query.trim());
+            const isCodeSearch = normalizedQuery.length >= 3 && /\d/.test(normalizedQuery);
+            
+            let matches = posSearchIndex.filter((item) => {
+                if (posCategoryFilter !== 'Todos' && item.product.category !== posCategoryFilter) return false;
+                if (!normalizedQuery) return true;
+
+                return (
+                    item.normalizedName.includes(normalizedQuery) ||
+                    item.normalizedCode.includes(normalizedQuery) ||
+                    item.normalizedBrand.includes(normalizedQuery)
+                );
+            });
+
+            if (normalizedQuery) {
+                matches.sort((a, b) => {
+                    const aCodeStarts = a.normalizedCode.startsWith(normalizedQuery) ? 1 : 0;
+                    const bCodeStarts = b.normalizedCode.startsWith(normalizedQuery) ? 1 : 0;
+                    if (aCodeStarts !== bCodeStarts) return bCodeStarts - aCodeStarts;
+
+                    const aNameStarts = a.normalizedName.startsWith(normalizedQuery) ? 1 : 0;
+                    const bNameStarts = b.normalizedName.startsWith(normalizedQuery) ? 1 : 0;
+                    if (aNameStarts !== bNameStarts) return bNameStarts - aNameStarts;
+
+                    if (isCodeSearch) return a.product.name.localeCompare(b.product.name);
+                    return a.product.name.localeCompare(b.product.name);
+                });
             }
 
-            if(matches.length === 0) {
+            const totalMatches = matches.length;
+            const visibleProducts = matches.slice(0, POS_MAX_RENDER_ITEMS).map(item => item.product);
+
+            if(totalMatches === 0) {
                 list.innerHTML = `<div class="col-span-full text-center text-slate-600 mt-10">
                     <i class="fas fa-search mb-2 text-2xl"></i><br>
                     No se encontraron productos.
@@ -692,7 +754,13 @@
                 return;
             }
 
-            list.innerHTML = matches.map(p => `
+            const cappedInfo = totalMatches > POS_MAX_RENDER_ITEMS
+                ? `<div class="col-span-full text-[11px] text-slate-500 bg-slate-900/60 border border-slate-700 rounded p-2">
+                    Mostrando ${POS_MAX_RENDER_ITEMS} de ${totalMatches} resultados. Escribe más letras para filtrar más rápido.
+                </div>`
+                : '';
+
+            list.innerHTML = `${cappedInfo}${visibleProducts.map(p => `
     <div class="bg-slate-800 border border-slate-700 p-3 rounded-xl cursor-pointer hover:border-amber-500 hover:shadow-lg hover:shadow-amber-900/20 transition group flex flex-col justify-between h-[120px] relative overflow-hidden" onclick="addToCart('${p.id}')">
         <div class="absolute top-0 right-0 bg-slate-700 text-slate-300 text-[9px] px-1.5 py-0.5 rounded-bl-lg z-10 font-mono">
             ${p.measure}
@@ -712,11 +780,12 @@
             </span>
         </div>
     </div>
-`).join('');
+`).join('')}`;
         }
 
         function addToCart(prodId) {
-            const prod = db.products.find(p => p.id === prodId);
+            const prod = posProductLookup.get(prodId);
+            if (!prod) return;
             const existing = currentCart.find(i => i.id === prodId);
             
             if(existing) {
