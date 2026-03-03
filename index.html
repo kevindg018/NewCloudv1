@@ -986,9 +986,13 @@
                                     <option value="Credito">Fiado (Crédito)</option>
                                 </select>
                             </div>
-                            <div>
+                           <div>
                                 <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Descuento</label>
                                 <input type="number" id="pay-discount" value="0" class="w-full bg-slate-900 border border-slate-600 rounded p-3 text-right" onkeyup="calcChange()">
+                            </div>
+                            <div class="col-span-2">
+                                <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Cantidad de pollos vendidos</label>
+                                <input type="number" id="pay-chicken-count" min="0" step="1" value="0" class="w-full bg-slate-900 border border-slate-600 rounded p-3 text-right" placeholder="Ej: 15">
                             </div>
                         </div>
 
@@ -1027,17 +1031,20 @@
             changeEl.className = change >= 0 ? "font-bold text-emerald-400 text-xl" : "font-bold text-red-400 text-xl";
         }
 
-        function processSale() {
+         function processSale() {
             const clientId = document.getElementById('pay-client').value;
             const method = document.getElementById('pay-method').value;
             const discount = parseFloat(document.getElementById('pay-discount').value) || 0;
             const payAmount = parseFloat(document.getElementById('pay-amount').value) || 0;
+            const chickenCount = parseInt(document.getElementById('pay-chicken-count').value, 10) || 0;
             
             const rawTotal = currentCart.reduce((acc, item) => acc + (item.qty * item.price), 0);
             const total = rawTotal - discount;
             const change = payAmount - total;
 
             if(method === 'Efectivo' && payAmount < total) return alert("Pago insuficiente");
+            if(chickenCount < 0) return alert("La cantidad de pollos no puede ser negativa");
+
 
             // Descontar inventario
             currentCart.forEach(item => {
@@ -1053,6 +1060,7 @@
                 method: method,
                 clientId: clientId,
                 discount: discount,
+                chickenCount: chickenCount,
                 payAmount: payAmount,
                 change: change,
                 user: db.currentUser.user
@@ -1326,12 +1334,20 @@
         function printTicket(sale) {
     const client = db.clients.find(c => String(c.id) === String(sale.clientId)) || {name: 'Consumidor Final'};
 
-    const itemsHtml = sale.items.map(i => `
-        <div style="display:flex; justify-content:space-between; font-size: 10px;">
-            <span>${i.qty} x ${i.name.substring(0,18)}</span>
-            <span>${formatMoney(i.qty * i.price)}</span>
+     const itemsHtml = sale.items.map(i => `
+        <div style="font-size: 10px; margin-bottom: 4px;">
+            <div style="display:flex; justify-content:space-between;">
+                <span>${i.qty} x ${i.name.substring(0,18)}</span>
+                <span>${formatMoney(i.qty * i.price)}</span>
+            </div>
+            <div style="display:flex; justify-content:space-between; color:#374151;">
+                <span>Precio venta</span>
+                <span>${formatMoney(i.price)}</span>
+            </div>
         </div>
     `).join('');
+
+    const subtotal = sale.items.reduce((acc, item) => acc + (item.qty * item.price), 0);
 
     const html = `
         <html>
@@ -1348,15 +1364,20 @@
         </head>
         <body>
             <div style="text-align:center; font-weight:bold;">
-                PROMOCIONES SOFIA<br>
-                <span style="font-size:10px;">NIT: 900.000.000-1</span>
+                Pollos AV<br>
+                <span style="font-size:10px;">Victor Andrés Villafañe</span><br>
+                <span style="font-size:10px;">3207923226</span><br>
+                <span style="font-size:10px;">Florida Valle</span>
             </div>
             <hr>
             Fecha: ${new Date(sale.date).toLocaleString()}<br>
             Ticket #: ${sale.id.substr(-6)}<br>
+            Pollos vendidos: ${sale.chickenCount || 0}<br>
             <hr>
             ${itemsHtml}
             <hr>
+            Subtotal: ${formatMoney(subtotal)}<br>
+            Descuento: ${formatMoney(sale.discount || 0)}<br>
             <b>TOTAL: ${formatMoney(sale.total)}</b><br>
             Pago: ${sale.method}<br>
             Cliente: ${client.name}<br>
@@ -1422,7 +1443,7 @@
                                 ${db.sales.slice(-15).reverse().map(s => `
                                     <tr class="hover:bg-slate-700/50">
                                         <td class="p-3">${new Date(s.date).toLocaleDateString()}</td>
-                                        <td class="p-3 text-xs text-slate-400">${s.items.length} items (Ref: ${s.id.substr(-4)})</td>
+                                     <td class="p-3 text-xs text-slate-400">${s.items.length} items / ${s.chickenCount || 0} pollos (Ref: ${s.id.substr(-4)})</td>
                                         <td class="p-3 text-right font-bold text-amber-500">${formatMoney(s.total)}</td>
                                         <td class="p-3"><span class="bg-slate-700 px-2 py-1 rounded text-xs">${s.method}</span></td>
                                     </tr>
@@ -1451,8 +1472,9 @@
         function exportToExcel() {
             const data = db.sales.map(s => ({
                 Fecha: new Date(s.date).toLocaleDateString(),
-                Total: s.total,
+               Total: s.total,
                 Metodo: s.method,
+                PollosVendidos: s.chickenCount || 0,
                 Vendedor: s.user
             }));
             const ws = XLSX.utils.json_to_sheet(data);
@@ -1785,3 +1807,4 @@ document.getElementById("importarArchivo").addEventListener("change", (e) => {
     </script>
 </body>
 </html>
+
