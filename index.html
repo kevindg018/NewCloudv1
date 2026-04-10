@@ -253,6 +253,20 @@
         if (!db.suppliers) db.suppliers = [];
         if (!db.expenses) db.expenses = [];
         if (!db.invoiceSettings) db.invoiceSettings = JSON.parse(JSON.stringify(initialData.invoiceSettings));
+        db.products = (db.products || []).map((product) => {
+            const baseSell = Number(product.sellPrice ?? product.sellPrices?.[0] ?? 0);
+            const normalizedSellPrices = [0, 1, 2].map((idx) => {
+                const val = product.sellPrices?.[idx];
+                if (val === null || val === undefined || val === '') return idx === 0 ? baseSell : null;
+                const parsed = Number(val);
+                return Number.isFinite(parsed) ? parsed : (idx === 0 ? baseSell : null);
+            });
+            return {
+                ...product,
+                sellPrice: normalizedSellPrices[0],
+                sellPrices: normalizedSellPrices
+            };
+        });
         // Asegurar categorías básicas del sistema si no hay nada
         if (db.categories.length === 0) db.categories = initialData.categories;
         if (db.measures.length === 0) db.measures = initialData.measures;
@@ -550,7 +564,13 @@
                                 <input type="number" id="prod-buy" placeholder="$ Compra" class="w-full rounded p-2 text-sm" required>
                             </div>
                             <div class="md:col-span-1">
-                                <input type="number" id="prod-sell" placeholder="$ Venta" class="w-full rounded p-2 text-sm font-bold text-amber-500" required>
+                                <input type="number" id="prod-sell-1" placeholder="$ Venta 1" class="w-full rounded p-2 text-sm font-bold text-amber-500" required>
+                            </div>
+                            <div class="md:col-span-1">
+                                <input type="number" id="prod-sell-2" placeholder="$ Venta 2 (opcional)" class="w-full rounded p-2 text-sm font-bold text-amber-500">
+                            </div>
+                            <div class="md:col-span-1">
+                                <input type="number" id="prod-sell-3" placeholder="$ Venta 3 (opcional)" class="w-full rounded p-2 text-sm font-bold text-amber-500">
                             </div>
                             <div class="md:col-span-4 text-right">
                                 <button type="submit" class="bg-emerald-600 text-white px-6 py-2 rounded hover:bg-emerald-500 font-bold shadow-lg shadow-emerald-900/50"><i class="fas fa-save mr-2"></i>Guardar Producto</button>
@@ -564,7 +584,9 @@
                                         <th class="p-3">Producto</th>
                                         <th class="p-3">Categoría</th>
                                         <th class="p-3 text-right">Stock</th>
-                                        <th class="p-3 text-right">Precio</th>
+                                        <th class="p-3 text-right">P1</th>
+                                        <th class="p-3 text-right">P2</th>
+                                        <th class="p-3 text-right">P3</th>
                                         <th class="p-3 text-center"></th>
                                     </tr>
                                 </thead>
@@ -590,8 +612,13 @@
     category: document.getElementById('prod-cat').value,
     measure: document.getElementById('prod-measure').value,
     buyPrice: parseFloat(document.getElementById('prod-buy').value),
-    sellPrice: parseFloat(document.getElementById('prod-sell').value)
+    sellPrices: [
+        parseFloat(document.getElementById('prod-sell-1').value),
+        parseFloat(document.getElementById('prod-sell-2').value) || null,
+        parseFloat(document.getElementById('prod-sell-3').value) || null
+    ]
 };
+                newProd.sellPrice = newProd.sellPrices[0];
 
                 const normalizedCode = normalizeText((newProd.code || '').trim());
                 const duplicateCode = db.products.find((p) => normalizeText((p.code || '').trim()) === normalizedCode && p.id !== productEditing);
@@ -664,7 +691,9 @@
                     </td>
                     <td class="p-3"><span class="bg-slate-900 px-2 py-0.5 rounded text-xs text-slate-400 border border-slate-700">${p.category}</span></td>
                     <td class="p-3 text-right ${p.stock <= 5 ? 'text-red-500 font-bold' : 'text-emerald-400'}">${p.stock}</td>
-                    <td class="p-3 text-right font-bold text-amber-500">${formatMoney(p.sellPrice)}</td>
+                    <td class="p-3 text-right font-bold text-amber-500">${formatMoney(p.sellPrices?.[0] ?? p.sellPrice)}</td>
+                    <td class="p-3 text-right font-bold text-amber-500">${p.sellPrices?.[1] ? formatMoney(p.sellPrices[1]) : '-'}</td>
+                    <td class="p-3 text-right font-bold text-amber-500">${p.sellPrices?.[2] ? formatMoney(p.sellPrices[2]) : '-'}</td>
                     <td class="p-3 text-center">
     <div class="flex justify-center gap-3">
         <button onclick="editProduct('${p.id}')" class="text-amber-400 hover:text-amber-300" title="Editar">
@@ -721,7 +750,9 @@
             document.getElementById('prod-cat').value = product.category;
             document.getElementById('prod-measure').value = product.measure;
             document.getElementById('prod-buy').value = product.buyPrice;
-            document.getElementById('prod-sell').value = product.sellPrice;
+            document.getElementById('prod-sell-1').value = product.sellPrices?.[0] ?? product.sellPrice ?? '';
+            document.getElementById('prod-sell-2').value = product.sellPrices?.[1] ?? '';
+            document.getElementById('prod-sell-3').value = product.sellPrices?.[2] ?? '';
 
             productEditing = id;
         }
@@ -943,7 +974,10 @@
         </div>
 
         <div class="mt-2 flex justify-between items-end">
-            <span class="text-amber-500 font-bold text-base leading-none">${formatMoney(p.sellPrice)}</span>
+            <div class="flex flex-col">
+                <span class="text-amber-500 font-bold text-base leading-none">${formatMoney(p.sellPrices?.[0] ?? p.sellPrice)}</span>
+                <span class="text-[9px] text-slate-500">P2: ${p.sellPrices?.[1] ? formatMoney(p.sellPrices[1]) : '-'} · P3: ${p.sellPrices?.[2] ? formatMoney(p.sellPrices[2]) : '-'}</span>
+            </div>
             <span class="text-[9px] ${p.stock < 5 ? 'bg-red-900 text-red-400' : 'bg-slate-900 text-slate-400'} px-1.5 py-0.5 rounded border border-slate-700">
                 Stock: ${p.stock}
              </span>
@@ -956,6 +990,11 @@
             const prod = posProductLookup.get(prodId);
             if (!prod) return;
             const existing = currentCart.find(i => i.id === prodId);
+            const productPrices = [
+                prod.sellPrices?.[0] ?? prod.sellPrice,
+                prod.sellPrices?.[1] ?? null,
+                prod.sellPrices?.[2] ?? null
+            ];
             
             if(existing) {
                 existing.qty++;
@@ -963,10 +1002,12 @@
                 currentCart.push({
                     id: prod.id,
                     name: prod.name,
-                    price: prod.sellPrice,
+                    price: productPrices[0],
                     qty: 1,
-                    originalPrice: prod.sellPrice,
-                    measure: prod.measure
+                    originalPrice: productPrices[0],
+                    measure: prod.measure,
+                    priceOptions: productPrices,
+                    selectedPriceIndex: 0
                 });
             }
             updateCartUI();
@@ -1007,6 +1048,16 @@
                             ${formatMoney(item.qty * item.price)}
                         </div>
                     </div>
+                    <div>
+                        <label class="text-[10px] text-slate-400">Precio</label>
+                        <select onchange="changeCartItemPrice(${idx}, this.value)" class="w-full mt-1 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs text-white">
+                            ${(item.priceOptions || [item.price]).map((priceOption, priceIdx) => `
+                                <option value="${priceIdx}" ${item.selectedPriceIndex === priceIdx ? 'selected' : ''} ${priceOption ? '' : 'disabled'}>
+                                    Precio ${priceIdx + 1}: ${priceOption ? formatMoney(priceOption) : 'No definido'}
+                                </option>
+                            `).join('')}
+                        </select>
+                    </div>
                 </div>
             `).join('');
 
@@ -1026,6 +1077,15 @@
         }
         function removeFromCart(idx) {
             currentCart.splice(idx, 1);
+            updateCartUI();
+        }
+        function changeCartItemPrice(idx, selectedIndex) {
+            const item = currentCart[idx];
+            if (!item) return;
+            const newPrice = item.priceOptions?.[Number(selectedIndex)];
+            if (!newPrice) return;
+            item.selectedPriceIndex = Number(selectedIndex);
+            item.price = Number(newPrice);
             updateCartUI();
         }
         function clearCart() {
@@ -1257,8 +1317,35 @@
                         <div class="bg-red-900/10 p-4 rounded-lg border border-red-900/30 mb-4">
                             <form id="expense-form" class="space-y-3">
                                 <div>
-                                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Concepto del Gasto</label>
+                                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Tipo de egreso</label>
+                                    <select id="exp-type" class="w-full rounded p-2 text-sm">
+                                        <option value="general">Egreso general</option>
+                                        <option value="purchase">Factura de compra (actualiza inventario)</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Concepto del Gasto / Factura</label>
                                     <input type="text" id="exp-desc" placeholder="Ej: Compra de hielo, Pago factura luz..." class="w-full rounded p-2 text-sm" required>
+                                </div>
+                                <div id="purchase-extra" class="hidden space-y-3 border border-slate-700 rounded p-3 bg-slate-900/70">
+                                    <div class="grid grid-cols-2 gap-3">
+                                        <div>
+                                            <label class="block text-xs font-bold text-slate-500 uppercase mb-1">N° Factura</label>
+                                            <input type="text" id="exp-invoice-number" class="w-full rounded p-2 text-sm" placeholder="FAC-00123">
+                                        </div>
+                                        <div>
+                                            <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Fecha factura</label>
+                                            <input type="date" id="exp-invoice-date" class="w-full rounded p-2 text-sm">
+                                        </div>
+                                    </div>
+                                    <div class="flex items-center justify-between">
+                                        <label class="text-xs font-bold text-slate-500 uppercase">Productos de la compra</label>
+                                        <button type="button" onclick="addPurchaseItemRow()" class="text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded border border-slate-600">
+                                            <i class="fas fa-plus mr-1"></i>Agregar fila
+                                        </button>
+                                    </div>
+                                    <div id="purchase-items" class="space-y-2"></div>
+                                    <p class="text-[11px] text-slate-500">Cada fila aumenta el stock del producto seleccionado.</p>
                                 </div>
                                 <div class="grid grid-cols-2 gap-3">
                                     <div>
@@ -1294,7 +1381,7 @@
                                         <tr class="hover:bg-slate-700/50">
                                             <td class="p-2">
                                                 <div class="font-bold">${e.desc}</div>
-                                                <div class="text-xs text-slate-500">${new Date(e.date).toLocaleDateString()} - ${e.method}</div>
+                                                <div class="text-xs text-slate-500">${new Date(e.date).toLocaleDateString()} - ${e.method} ${e.type === 'purchase' ? '| Factura compra' : ''} ${e.invoiceNumber ? `| #${e.invoiceNumber}` : ''}</div>
                                             </td>
                                             <td class="p-2 text-right font-bold text-red-400">-${formatMoney(e.amount)}</td>
                                         </tr>
@@ -1321,18 +1408,43 @@
                 showToast('Proveedor agregado');
             });
 
+            const expenseType = document.getElementById('exp-type');
+            if (expenseType) {
+                expenseType.addEventListener('change', () => togglePurchaseFields(expenseType.value === 'purchase'));
+            }
+            togglePurchaseFields(false);
+
             document.getElementById('expense-form').addEventListener('submit', (e) => {
                 e.preventDefault();
                 const amount = parseFloat(document.getElementById('exp-amount').value);
                 const method = document.getElementById('exp-method').value;
-                
+                const type = document.getElementById('exp-type').value;
+                const purchaseItems = type === 'purchase' ? readPurchaseItemsFromForm() : [];
+
+                if (!amount || amount <= 0) {
+                    showToast('Ingresa un valor válido para el egreso', 'error');
+                    return;
+                }
+                if (type === 'purchase' && purchaseItems.length === 0) {
+                    showToast('Agrega al menos un producto en la factura de compra', 'error');
+                    return;
+                }
+
                 if(method === 'Efectivo') {
                     if(!db.caja.isOpen) return showToast('La caja está cerrada, no puede sacar efectivo', 'error');
-                    // Verificar saldo teóricamente, aunque en la práctica a veces se saca igual
                     const currentCash = db.caja.openAmount + db.caja.salesSession - db.caja.expenseSession;
                     if(amount > currentCash) alert("ADVERTENCIA: El monto supera el efectivo calculado en caja.");
-                    
                     db.caja.expenseSession += amount;
+                }
+
+                if (type === 'purchase') {
+                    purchaseItems.forEach((item) => {
+                        const product = db.products.find((p) => p.id === item.productId);
+                        if (product) {
+                            product.stock = Number(product.stock || 0) + item.qty;
+                            if (item.unitCost > 0) product.buyPrice = item.unitCost;
+                        }
+                    });
                 }
 
                 db.expenses.push({
@@ -1342,12 +1454,17 @@
                     amount: amount,
                     supplierId: document.getElementById('exp-supplier').value,
                     method: method,
-                    user: db.currentUser.user
+                    user: db.currentUser.user,
+                    type,
+                    invoiceNumber: document.getElementById('exp-invoice-number')?.value || '',
+                    invoiceDate: document.getElementById('exp-invoice-date')?.value || '',
+                    items: purchaseItems
                 });
                 
                 saveDB();
+                refreshPOSSearchIndex();
                 renderSuppliers(container);
-                showToast('Gasto registrado correctamente');
+                showToast(type === 'purchase' ? 'Factura registrada y stock actualizado' : 'Gasto registrado correctamente');
             });
         }
 
@@ -1357,6 +1474,70 @@
                 saveDB();
                 renderSuppliers(document.getElementById('content-area'));
             }
+        }
+
+        function togglePurchaseFields(show) {
+            const purchaseExtra = document.getElementById('purchase-extra');
+            if (!purchaseExtra) return;
+            purchaseExtra.classList.toggle('hidden', !show);
+            if (show) {
+                if (!document.getElementById('purchase-items')?.children.length) addPurchaseItemRow();
+                if (document.getElementById('exp-invoice-date') && !document.getElementById('exp-invoice-date').value) {
+                    document.getElementById('exp-invoice-date').value = new Date().toISOString().slice(0, 10);
+                }
+            }
+        }
+
+        function addPurchaseItemRow() {
+            const purchaseItemsEl = document.getElementById('purchase-items');
+            if (!purchaseItemsEl) return;
+            const row = document.createElement('div');
+            row.className = 'grid grid-cols-12 gap-2 items-end purchase-row';
+            row.innerHTML = `
+                <div class="col-span-6">
+                    <label class="text-[10px] text-slate-500">Producto</label>
+                    <select class="purchase-product w-full rounded p-2 text-xs">
+                        <option value="">Selecciona producto</option>
+                        ${db.products.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}
+                    </select>
+                </div>
+                <div class="col-span-2">
+                    <label class="text-[10px] text-slate-500">Cant.</label>
+                    <input type="number" min="0.001" step="0.001" class="purchase-qty w-full rounded p-2 text-xs" placeholder="0">
+                </div>
+                <div class="col-span-3">
+                    <label class="text-[10px] text-slate-500">Costo unit.</label>
+                    <input type="number" min="0" step="1" class="purchase-unit-cost w-full rounded p-2 text-xs" placeholder="0">
+                </div>
+                <div class="col-span-1">
+                    <button type="button" onclick="removePurchaseItemRow(this)" class="w-full bg-red-900/30 text-red-400 rounded p-2 border border-red-800 hover:bg-red-900/50">
+                        <i class="fas fa-trash text-xs"></i>
+                    </button>
+                </div>
+            `;
+            purchaseItemsEl.appendChild(row);
+        }
+
+        function removePurchaseItemRow(btn) {
+            const row = btn.closest('.purchase-row');
+            if (!row) return;
+            row.remove();
+            const purchaseItemsEl = document.getElementById('purchase-items');
+            if (purchaseItemsEl && purchaseItemsEl.children.length === 0) addPurchaseItemRow();
+        }
+
+        function readPurchaseItemsFromForm() {
+            const rows = Array.from(document.querySelectorAll('#purchase-items .purchase-row'));
+            return rows.map((row) => {
+                const productId = row.querySelector('.purchase-product')?.value;
+                const qty = parseFloat(row.querySelector('.purchase-qty')?.value || '0');
+                const unitCost = parseFloat(row.querySelector('.purchase-unit-cost')?.value || '0');
+                return {
+                    productId,
+                    qty,
+                    unitCost
+                };
+            }).filter(item => item.productId && item.qty > 0);
         }
 
        function closeCaja() {
