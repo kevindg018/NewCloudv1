@@ -1233,35 +1233,36 @@
             changeEl.className = change >= 0 ? "font-bold text-emerald-400 text-xl" : "font-bold text-red-400 text-xl";
         }
 
-         function processSale() {
-    const method = document.getElementById('pay-method').value;
-    const clientId = document.getElementById('pay-client')?.value || null;
-    const discount = parseFloat(document.getElementById('pay-discount').value) || 0;
-    const payAmount = parseFloat(document.getElementById('pay-amount').value) || 0;
-    
-    const rawTotal = currentCart.reduce((acc, item) => acc + (item.qty * item.price), 0);
-    const total = rawTotal - discount;
-    const change = payAmount - total;
+        function processSale() {
+            const method = document.getElementById('pay-method').value;
+            const clientId = document.getElementById('pay-client')?.value || null;
+            const discount = parseFloat(document.getElementById('pay-discount').value) || 0;
+            const payAmount = parseFloat(document.getElementById('pay-amount').value) || 0;
+            
+            const rawTotal = currentCart.reduce((acc, item) => acc + (item.qty * item.price), 0);
+            const total = rawTotal - discount;
+            const change = payAmount - total;
 
-    // Validaciones de seguridad
-    if(method === 'Efectivo' && payAmount < total) return alert("Pago insuficiente");
-    if(method === 'Credito') {
-        if(!clientId) return alert("Selecciona un cliente para registrar el crédito.");
-    }
+            if(method === 'Efectivo' && payAmount < total) return alert("Pago insuficiente");
+            if(method === 'Credito') {
+                if(!clientId) return alert("Selecciona un cliente para registrar el crédito.");
+            }
 
-    // --- PUNTO DE INTEGRACIÓN PARA LA CAJA USB ---
-    // Abrimos la gaveta justo cuando confirmamos que todo está en orden
-    triggerCashDrawer('sale');
-    // ----------------------------------------------
+            // Aquí pusimos la línea nueva
+            triggerCashDrawer('sale');
 
-    // Descontar inventario
-    currentCart.forEach(item => {
-        const p = db.products.find(prod => prod.id === item.id);
-        if(p) p.stock -= item.qty;
-    });
+            // Descontar inventario
+            currentCart.forEach(item => {
+                const p = db.products.find(prod => prod.id === item.id);
+                if(p) p.stock -= item.qty;
+            });
 
-    // ... aquí continuaría el resto de tu lógica de guardado y cerrar modal
-}
+            // IMPORTANTE: Revisa que estas líneas y llaves de cierre estén ahí:
+            saveDB();
+            document.getElementById('checkout-modal').remove();
+            clearCart();
+            showToast('Venta procesada con éxito');
+            renderPOS(document.getElementById('main-content'));
 
             const sale = {
                 id: generateId(),
