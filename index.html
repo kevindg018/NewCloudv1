@@ -1234,25 +1234,34 @@
         }
 
          function processSale() {
-            const method = document.getElementById('pay-method').value;
-            const clientId = document.getElementById('pay-client')?.value || null;
-            const discount = parseFloat(document.getElementById('pay-discount').value) || 0;
-            const payAmount = parseFloat(document.getElementById('pay-amount').value) || 0;
-            
-            const rawTotal = currentCart.reduce((acc, item) => acc + (item.qty * item.price), 0);
-            const total = rawTotal - discount;
-            const change = payAmount - total;
+    const method = document.getElementById('pay-method').value;
+    const clientId = document.getElementById('pay-client')?.value || null;
+    const discount = parseFloat(document.getElementById('pay-discount').value) || 0;
+    const payAmount = parseFloat(document.getElementById('pay-amount').value) || 0;
+    
+    const rawTotal = currentCart.reduce((acc, item) => acc + (item.qty * item.price), 0);
+    const total = rawTotal - discount;
+    const change = payAmount - total;
 
-            if(method === 'Efectivo' && payAmount < total) return alert("Pago insuficiente");
-            if(method === 'Credito') {
-                if(!clientId) return alert("Selecciona un cliente para registrar el crédito.");
-            }
+    // Validaciones de seguridad
+    if(method === 'Efectivo' && payAmount < total) return alert("Pago insuficiente");
+    if(method === 'Credito') {
+        if(!clientId) return alert("Selecciona un cliente para registrar el crédito.");
+    }
 
-            // Descontar inventario
-            currentCart.forEach(item => {
-                const p = db.products.find(prod => prod.id === item.id);
-                if(p) p.stock -= item.qty;
-            });
+    // --- PUNTO DE INTEGRACIÓN PARA LA CAJA USB ---
+    // Abrimos la gaveta justo cuando confirmamos que todo está en orden
+    triggerCashDrawer('sale');
+    // ----------------------------------------------
+
+    // Descontar inventario
+    currentCart.forEach(item => {
+        const p = db.products.find(prod => prod.id === item.id);
+        if(p) p.stock -= item.qty;
+    });
+
+    // ... aquí continuaría el resto de tu lógica de guardado y cerrar modal
+}
 
             const sale = {
                 id: generateId(),
