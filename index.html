@@ -1233,7 +1233,7 @@
             changeEl.className = change >= 0 ? "font-bold text-emerald-400 text-xl" : "font-bold text-red-400 text-xl";
         }
 
-        function processSale() {
+         function processSale() {
             const method = document.getElementById('pay-method').value;
             const clientId = document.getElementById('pay-client')?.value || null;
             const discount = parseFloat(document.getElementById('pay-discount').value) || 0;
@@ -1248,21 +1248,11 @@
                 if(!clientId) return alert("Selecciona un cliente para registrar el crédito.");
             }
 
-            // Aquí pusimos la línea nueva
-            triggerCashDrawer('sale');
-
             // Descontar inventario
             currentCart.forEach(item => {
                 const p = db.products.find(prod => prod.id === item.id);
                 if(p) p.stock -= item.qty;
             });
-
-            // IMPORTANTE: Revisa que estas líneas y llaves de cierre estén ahí:
-            saveDB();
-            document.getElementById('checkout-modal').remove();
-            clearCart();
-            showToast('Venta procesada con éxito');
-            renderPOS(document.getElementById('main-content'));
 
             const sale = {
                 id: generateId(),
