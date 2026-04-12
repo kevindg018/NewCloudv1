@@ -243,6 +243,31 @@
             setTimeout(() => toast.classList.add('translate-y-32'), 3000);
         }
 
+        // Intenta abrir la gaveta física de la caja si existe integración nativa.
+        // Integraciones soportadas:
+        // - window.CashDrawerBridge.open()
+        // - window.electronAPI.openCashDrawer()
+        // - window.openCashDrawer()
+        function triggerCashDrawer(reason = 'sale') {
+            try {
+                if (window.CashDrawerBridge && typeof window.CashDrawerBridge.open === 'function') {
+                    window.CashDrawerBridge.open({ reason });
+                    return true;
+                }
+                if (window.electronAPI && typeof window.electronAPI.openCashDrawer === 'function') {
+                    window.electronAPI.openCashDrawer(reason);
+                    return true;
+                }
+                if (typeof window.openCashDrawer === 'function') {
+                    window.openCashDrawer(reason);
+                    return true;
+                }
+            } catch (error) {
+                console.error('No se pudo abrir la caja registradora:', error);
+            }
+            return false;
+        }
+
         function formatMoney(amount) {
             return new Intl.NumberFormat('es-CO', {
                 style: 'currency',
@@ -1255,6 +1280,14 @@
 
             db.sales.push(sale);
             saveDB();
+
+            // Abrir gaveta para cobros en efectivo (si hay integración de hardware).
+            if (method === 'Efectivo') {
+                const opened = triggerCashDrawer('sale');
+                if (!opened) {
+                    console.info('Sin integración de gaveta: define window.CashDrawerBridge.open / electronAPI.openCashDrawer / window.openCashDrawer');
+                }
+            }
             
             document.getElementById('checkout-modal').remove();
             printTicket(sale);
@@ -1950,6 +1983,10 @@
                     });
                     
                     // Registrar el abono como un ingreso a caja si se desea (opcional, aquí simplificado)
+                    if(db.caja.isOpen) {
+                        db.caja.salesSession += applicableAmount;
+                        triggerCashDrawer('payment');
+                    }
                     if(db.caja.isOpen) db.caja.salesSession += applicableAmount; 
 
                     saveDB();
