@@ -1987,6 +1987,7 @@
                         db.caja.salesSession += applicableAmount;
                         triggerCashDrawer('payment');
                     }
+                    if(db.caja.isOpen) db.caja.salesSession += applicableAmount; 
 
                     saveDB();
                     renderClients(document.getElementById('content-area'));
