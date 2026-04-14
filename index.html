@@ -183,7 +183,7 @@
             sales: [],
             creditPayments: [], // {id, clientId, amount, date, user}
             expenses: [], // {id, date, desc, amount, supplierId, method, user}
-            caja: { isOpen: false, openTime: null, openAmount: 0, salesSession: 0, expenseSession: 0, history: [] },
+            caja: { isOpen: false, openTime: null, openAmount: 0, salesSession: 0, creditPaymentSession: 0, expenseSession: 0, history: [] },
             currentUser: null,
             invoiceSettings: {
                 businessName: 'Negocio',
@@ -205,6 +205,7 @@
         // Migraciones / Fixes de estructura
         if (!db.caja) db.caja = JSON.parse(JSON.stringify(initialData.caja));
         if (!db.caja.history) db.caja.history = [];
+        if (db.caja.creditPaymentSession === undefined) db.caja.creditPaymentSession = 0;
         if (db.caja.expenseSession === undefined) db.caja.expenseSession = 0;
         if (!db.suppliers) db.suppliers = [];
         if (!db.expenses) db.expenses = [];
@@ -1120,6 +1121,7 @@
             db.caja.openAmount = amount;
             db.caja.openTime = new Date();
             db.caja.salesSession = 0;
+            db.caja.creditPaymentSession = 0;
             db.caja.expenseSession = 0;
             saveDB();
             
@@ -1471,7 +1473,7 @@
 
                 if(method === 'Efectivo') {
                     if(!db.caja.isOpen) return showToast('La caja está cerrada, no puede sacar efectivo', 'error');
-                    const currentCash = db.caja.openAmount + db.caja.salesSession - db.caja.expenseSession;
+                    const currentCash = db.caja.openAmount + db.caja.salesSession + db.caja.creditPaymentSession - db.caja.expenseSession;
                     if(amount > currentCash) alert("ADVERTENCIA: El monto supera el efectivo calculado en caja.");
                     db.caja.expenseSession += amount;
                 }
@@ -1592,6 +1594,7 @@
         closeTime: new Date(),
         openAmount: db.caja.openAmount,
         sales: db.caja.salesSession,
+        creditPayments: db.caja.creditPaymentSession || 0,
         expenses: db.caja.expenseSession,
         user: db.currentUser?.name || 'Sistema'
     };
@@ -1599,10 +1602,17 @@
     const totalEsperado =
         cierre.openAmount +
         cierre.sales -
-        cierre.expenses;
+        cierre.expenses +
+        cierre.creditPayments;
     const fechaCierre = new Date(cierre.closeTime);
     const ventasDelDia = (db.sales || [])
         .filter(sale => new Date(sale.date).toDateString() === fechaCierre.toDateString())
+        .sort((a, b) => new Date(a.date) - new Date(b.date));
+    const egresosDelDia = (db.expenses || [])
+        .filter(expense => new Date(expense.date).toDateString() === fechaCierre.toDateString())
+        .sort((a, b) => new Date(a.date) - new Date(b.date));
+    const abonosDelDia = (db.creditPayments || [])
+        .filter(payment => new Date(payment.date).toDateString() === fechaCierre.toDateString())
         .sort((a, b) => new Date(a.date) - new Date(b.date));
 
     /* ================= PDF ================= */
@@ -1619,7 +1629,8 @@
 
     const rows = [
         ['Base inicial', formatMoney(cierre.openAmount)],
-        ['Ventas en efectivo', formatMoney(cierre.sales)],
+        ['Ventas', formatMoney(cierre.sales)],
+        ['Abonos (créditos)', formatMoney(cierre.creditPayments)],
         ['Gastos en efectivo', `-${formatMoney(cierre.expenses)}`],
         ['----------------', '------------'],
         ['TOTAL ESPERADO EN CAJA', formatMoney(totalEsperado)]
@@ -1657,6 +1668,51 @@
         }
     });
 
+    doc.text('Detalle de egresos del día', 10, doc.lastAutoTable.finalY + 12);
+    const egresosRows = egresosDelDia.length
+        ? egresosDelDia.map((expense, idx) => ([
+            idx + 1,
+            new Date(expense.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            expense.desc || 'Egreso',
+            `-${formatMoney(expense.amount)}`
+        ]))
+        : [['-', '-', 'Sin egresos registrados', formatMoney(0)]];
+
+    doc.autoTable({
+        startY: doc.lastAutoTable.finalY + 16,
+        head: [['#', 'Hora', 'Detalle', 'Valor']],
+        body: egresosRows,
+        styles: { fontSize: 9 },
+        columnStyles: {
+            0: { halign: 'center', cellWidth: 12 },
+            3: { halign: 'right', fontStyle: 'bold' }
+        }
+    });
+
+    doc.text('Detalle de abonos del día', 10, doc.lastAutoTable.finalY + 12);
+    const abonosRows = abonosDelDia.length
+        ? abonosDelDia.map((payment, idx) => {
+            const client = db.clients.find(c => String(c.id) === String(payment.clientId));
+            return [
+                idx + 1,
+                new Date(payment.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                client?.name || 'Cliente',
+                formatMoney(payment.amount)
+            ];
+        })
+        : [['-', '-', 'Sin abonos registrados', formatMoney(0)]];
+
+    doc.autoTable({
+        startY: doc.lastAutoTable.finalY + 16,
+        head: [['#', 'Hora', 'Cliente', 'Valor']],
+        body: abonosRows,
+        styles: { fontSize: 9 },
+        columnStyles: {
+            0: { halign: 'center', cellWidth: 12 },
+            3: { halign: 'right', fontStyle: 'bold' }
+        }
+    });
+
     doc.text(
         'Documento generado automáticamente por el sistema',
         105,
@@ -1679,6 +1735,7 @@
     db.caja.openTime = null;
     db.caja.openAmount = 0;
     db.caja.salesSession = 0;
+    db.caja.creditPaymentSession = 0;
     db.caja.expenseSession = 0;
 
     currentCart = [];
@@ -1801,6 +1858,7 @@
                                     <th class="p-3">Detalle</th>
                                     <th class="p-3 text-right">Total</th>
                                     <th class="p-3">Método</th>
+                                    <th class="p-3 text-center">Acción</th>
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-slate-700">
@@ -1810,6 +1868,11 @@
                                      <td class="p-3 text-xs text-slate-400">${s.items.length} items • ${s.items.map(item => item.name).join(', ')} (Ref: ${s.id.substr(-4)})</td>
                                         <td class="p-3 text-right font-bold text-amber-500">${formatMoney(s.total)}</td>
                                         <td class="p-3"><span class="bg-slate-700 px-2 py-1 rounded text-xs">${s.method}</span></td>
+                                        <td class="p-3 text-center">
+                                            <button onclick="deleteSale('${s.id}')" class="text-red-500 hover:text-red-400" title="Eliminar venta">
+                                                <i class="fas fa-trash"></i>
+                                            </button>
+                                        </td>
                                     </tr>
                                 `).join('')}
                             </tbody>
@@ -1847,6 +1910,43 @@
                 showToast('Stock actualizado correctamente');
                 renderInventory(document.getElementById('content-area'));
             }
+        }
+
+        function deleteSale(saleId) {
+            const sale = db.sales.find(s => String(s.id) === String(saleId));
+            if (!sale) {
+                showToast('No se encontró la venta a eliminar', 'error');
+                return;
+            }
+
+            const paidAmount = Number(sale.paidAmount) || 0;
+            if (sale.method === 'Credito' && paidAmount > 0) {
+                showToast('No se puede eliminar un crédito con abonos aplicados', 'error');
+                return;
+            }
+
+            if (!confirm('¿Seguro que deseas eliminar esta venta? Esta acción restaura stock y caja.')) return;
+
+            sale.items.forEach((item) => {
+                const product = db.products.find((p) => String(p.id) === String(item.id));
+                if (product) {
+                    product.stock = Number(product.stock || 0) + Number(item.qty || 0);
+                }
+            });
+
+            if (sale.method === 'Efectivo' && db.caja.isOpen) {
+                db.caja.salesSession = Math.max((Number(db.caja.salesSession) || 0) - (Number(sale.total) || 0), 0);
+            } else if (sale.method === 'Credito') {
+                const client = db.clients.find(c => String(c.id) === String(sale.clientId));
+                if (client) {
+                    client.credit = Math.max((Number(client.credit) || 0) - (Number(sale.total) || 0), 0);
+                }
+            }
+
+            db.sales = db.sales.filter(s => String(s.id) !== String(saleId));
+            saveDB();
+            renderInventory(document.getElementById('content-area'));
+            showToast('Venta eliminada correctamente');
         }
 
         function exportToExcel() {
@@ -1982,12 +2082,11 @@
                         user: db.currentUser?.user || 'sistema'
                     });
                     
-                    // Registrar el abono como un ingreso a caja si se desea (opcional, aquí simplificado)
+                    // Registrar el abono como ingreso en su sección independiente de caja
                     if(db.caja.isOpen) {
-                        db.caja.salesSession += applicableAmount;
+                        db.caja.creditPaymentSession += applicableAmount;
                         triggerCashDrawer('payment');
                     }
-                    if(db.caja.isOpen) db.caja.salesSession += applicableAmount; 
 
                     saveDB();
                     renderClients(document.getElementById('content-area'));
