@@ -27,7 +27,15 @@
         ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: #475569; }
 
-        input, select, textarea { color: #e2e8f0; }
+        input, select, textarea {
+            color: #e2e8f0;
+            background-color: #0f172a;
+            border-color: #475569;
+        }
+        input::placeholder, textarea::placeholder {
+            color: #94a3b8;
+            opacity: 1;
+        }
         input:focus, select:focus, textarea:focus {
             border-color: #f59e0b !important;
             outline: none;
@@ -117,9 +125,13 @@
                     <a href="#" onclick="navigate('admin')" class="nav-item group flex items-center px-4 py-3 text-sm font-medium rounded-md hover:bg-slate-800 hover:text-amber-500 transition-colors">
                         <i class="fas fa-cog w-6 text-slate-400 group-hover:text-amber-500"></i> Administración
                     </a>
-                    <button id="exportarDatos">📤 Exportar datos</button>
-<input type="file" id="importarArchivo" accept=".json" hidden>
-<button id="importarDatos">📥 Importar datos</button>
+                    <button id="exportarDatos" type="button" class="w-full mt-2 text-left group flex items-center px-4 py-3 text-sm font-medium rounded-md bg-slate-800/70 hover:bg-slate-800 hover:text-emerald-400 transition-colors">
+                        <i class="fas fa-file-export w-6 text-emerald-400"></i> Exportar datos
+                    </button>
+                    <input type="file" id="importarArchivo" accept=".json" hidden>
+                    <button id="importarDatos" type="button" class="w-full group flex items-center px-4 py-3 text-sm font-medium rounded-md bg-slate-800/70 hover:bg-slate-800 hover:text-amber-400 transition-colors">
+                        <i class="fas fa-file-import w-6 text-amber-400"></i> Importar datos
+                    </button>
 
                 </nav>
             </div>
@@ -181,6 +193,7 @@
             clients: [{id: 1, name: 'Consumidor Final', cedula: '222222222', phone: '', address: '', credit: 0}],
             suppliers: [], // {id, name, nit, contact, phone}
             sales: [],
+            openTickets: [],
             creditPayments: [], // {id, clientId, amount, date, user}
             expenses: [], // {id, date, desc, amount, supplierId, method, user}
             caja: { isOpen: false, openTime: null, openAmount: 0, salesSession: 0, creditPaymentSession: 0, expenseSession: 0, history: [] },
@@ -210,6 +223,7 @@
         if (!db.suppliers) db.suppliers = [];
         if (!db.expenses) db.expenses = [];
         if (!db.creditPayments) db.creditPayments = [];
+        if (!Array.isArray(db.openTickets)) db.openTickets = [];
         if (!db.invoiceSettings) db.invoiceSettings = JSON.parse(JSON.stringify(initialData.invoiceSettings));
         db.products = (db.products || []).map((product) => {
             const baseSell = Number(product.sellPrice ?? product.sellPrices?.[0] ?? 0);
@@ -764,6 +778,7 @@
         // --- VISTA POS (CAJA Y VENTAS)
          let productEditing = null;
         let currentCart = [];
+        let activeTicketId = null;
         let posCategoryFilter = 'Todos';
         let posSearchTimer = null;
         const POS_MAX_RENDER_ITEMS = 120;
@@ -787,7 +802,66 @@
 
         refreshPOSSearchIndex();
         
+        function ensureOpenTickets() {
+            if (!Array.isArray(db.openTickets)) db.openTickets = [];
+            if (db.openTickets.length === 0) {
+                db.openTickets = [{ id: generateId(), name: 'Ticket 1', cart: [] }];
+            }
+            if (!db.openTickets.some((ticket) => ticket.id === activeTicketId)) {
+                activeTicketId = db.openTickets[0].id;
+            }
+            const activeTicket = db.openTickets.find((ticket) => ticket.id === activeTicketId);
+            currentCart = Array.isArray(activeTicket?.cart) ? activeTicket.cart : [];
+        }
+
+        function persistActiveTicketCart() {
+            const activeTicket = db.openTickets.find((ticket) => ticket.id === activeTicketId);
+            if (activeTicket) activeTicket.cart = currentCart;
+        }
+
+        function createNewSaleTicket() {
+            ensureOpenTickets();
+            persistActiveTicketCart();
+            const newTicket = {
+                id: generateId(),
+                name: `Ticket ${db.openTickets.length + 1}`,
+                cart: []
+            };
+            db.openTickets.push(newTicket);
+            activeTicketId = newTicket.id;
+            currentCart = newTicket.cart;
+            saveDB();
+            renderPOS(document.getElementById('content-area'));
+        }
+
+        function switchSaleTicket(ticketId) {
+            ensureOpenTickets();
+            persistActiveTicketCart();
+            const nextTicket = db.openTickets.find((ticket) => ticket.id === ticketId);
+            if (!nextTicket) return;
+            activeTicketId = ticketId;
+            currentCart = nextTicket.cart || [];
+            saveDB();
+            updateCartUI();
+        }
+
+        function closeSaleTicket(ticketId) {
+            ensureOpenTickets();
+            if (db.openTickets.length === 1) {
+                showToast('Debe existir al menos un ticket abierto', 'error');
+                return;
+            }
+            db.openTickets = db.openTickets.filter((ticket) => ticket.id !== ticketId);
+            if (activeTicketId === ticketId) {
+                activeTicketId = db.openTickets[0].id;
+                currentCart = db.openTickets[0].cart || [];
+            }
+            saveDB();
+            renderPOS(document.getElementById('content-area'));
+        }
+        
         function renderPOS(container) {
+            ensureOpenTickets();
             container.innerHTML = `
                 <div class="flex flex-col h-full gap-4">
                     <!-- Header Caja -->
@@ -813,9 +887,24 @@
                         '<div class="flex-1 flex flex-col items-center justify-center text-slate-600 bg-slate-900/50 border-2 border-dashed border-slate-700 rounded-xl m-4"><i class="fas fa-door-closed text-6xl mb-4 opacity-50"></i><span class="text-xl font-bold">LA CAJA ESTÁ CERRADA</span><p class="text-sm">Abre la caja para comenzar a facturar</p></div>' 
                         : `
                     
-                    <div class="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-3 gap-4 overflow-hidden">
+                    <div class="bg-slate-900/80 border border-slate-700 rounded-xl p-3">
+                        <div class="flex items-center justify-between gap-2 flex-wrap">
+                            <div class="flex gap-2 overflow-x-auto pb-1">
+                                ${db.openTickets.map(ticket => `
+                                    <button onclick="switchSaleTicket('${ticket.id}')" class="px-3 py-2 rounded-lg border text-xs font-bold whitespace-nowrap ${ticket.id === activeTicketId ? 'bg-amber-500 text-slate-900 border-amber-400' : 'bg-slate-800 text-slate-300 border-slate-700'}">
+                                        ${ticket.name} (${ticket.cart?.length || 0})
+                                    </button>
+                                `).join('')}
+                            </div>
+                            <button onclick="createNewSaleTicket()" class="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-2 rounded-lg text-xs font-bold">
+                                <i class="fas fa-plus mr-1"></i> Nuevo ticket
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-5 gap-4 overflow-hidden">
                         <!-- Panel Izquierdo: Productos -->
-                        <div class="lg:col-span-2 min-h-0 flex flex-col gap-3 overflow-hidden">
+                        <div class="xl:col-span-3 min-h-0 flex flex-col gap-3 overflow-hidden">
                             <!-- Filtros Rápidos -->
                             <div class="flex gap-2 overflow-x-auto pb-1" id="pos-category-filters">
                                 <button onclick="setPosFilter('Todos')" class="px-4 py-2 rounded-full bg-amber-500 text-slate-900 text-xs font-bold whitespace-nowrap">Todos</button>
@@ -834,10 +923,13 @@
                         </div>
 
                         <!-- Panel Derecho: Ticket -->
-                        <div class="bg-slate-800 rounded-xl border border-slate-700 min-h-0 flex flex-col h-full shadow-2xl">
+                        <div class="bg-slate-800 rounded-xl border border-slate-700 min-h-0 flex flex-col h-full shadow-2xl xl:col-span-2">
                             <div class="p-4 bg-slate-900 border-b border-slate-700 rounded-t-xl flex justify-between items-center">
                                 <span class="font-bold text-amber-500 tracking-wide"><i class="fas fa-receipt mr-2"></i>TICKET ACTUAL</span>
-                                <button onclick="clearCart()" class="text-xs text-red-500 hover:text-red-400 flex items-center gap-1"><i class="fas fa-trash"></i> LIMPIAR</button>
+                                <div class="flex items-center gap-2">
+                                    <button onclick="closeSaleTicket('${activeTicketId}')" class="text-xs text-slate-400 hover:text-red-400 flex items-center gap-1"><i class="fas fa-xmark"></i> Cerrar</button>
+                                    <button onclick="clearCart()" class="text-xs text-red-500 hover:text-red-400 flex items-center gap-1"><i class="fas fa-trash"></i> LIMPIAR</button>
+                                </div>
                             </div>
                             
                             <div id="pos-cart-items" class="flex-1 min-h-0 overflow-y-auto p-3 space-y-2 text-sm bg-slate-800/50">
@@ -1085,6 +1177,8 @@
             const total = currentCart.reduce((acc, item) => acc + (item.qty * item.price), 0);
             if(totalEl) totalEl.innerText = formatMoney(total);
             if(subtotalEl) subtotalEl.innerText = formatMoney(total);
+            persistActiveTicketCart();
+            saveDB();
         }
 
         function updateItemQty(idx, val) {
@@ -1123,6 +1217,7 @@
         }
         function clearCart() {
             currentCart = [];
+            persistActiveTicketCart();
             updateCartUI();
         }
 
@@ -1160,6 +1255,9 @@
             db.caja.salesSession = 0;
             db.caja.creditPaymentSession = 0;
             db.caja.expenseSession = 0;
+            if (!Array.isArray(db.openTickets) || db.openTickets.length === 0) {
+                db.openTickets = [{ id: generateId(), name: 'Ticket 1', cart: [] }];
+            }
             saveDB();
             
             document.getElementById('open-caja-modal').remove();
@@ -1318,6 +1416,7 @@
                 change: method === 'Credito' ? 0 : change,
                 user: db.currentUser.user
             };
+            sale.invoiceHtml = buildInvoiceHtml(sale);
 
             // Manejo de dinero y deudas
             if (method === 'Efectivo') {
@@ -1330,6 +1429,8 @@
             }
 
             db.sales.push(sale);
+            db.openTickets = db.openTickets.map((ticket) => ticket.id === activeTicketId ? { ...ticket, cart: [] } : ticket);
+            currentCart = [];
             saveDB();
 
             // Abrir gaveta para cobros en efectivo (si hay integración de hardware).
@@ -1342,7 +1443,6 @@
             
             document.getElementById('checkout-modal').remove();
             printTicket(sale);
-            currentCart = [];
             navigate('pos');
             showToast('Venta Registrada Exitosamente');
         }
@@ -1811,7 +1911,9 @@
     db.caja.creditPaymentSession = 0;
     db.caja.expenseSession = 0;
 
-    currentCart = [];
+    db.openTickets = [{ id: generateId(), name: 'Ticket 1', cart: [] }];
+    activeTicketId = db.openTickets[0].id;
+    currentCart = db.openTickets[0].cart;
 
     saveDB();
     updateCajaStatus();
@@ -1820,7 +1922,7 @@
 }
 
 
-        function printTicket(sale) {
+        function buildInvoiceHtml(sale) {
      const creditClient = sale.clientId ? db.clients.find(c => String(c.id) === String(sale.clientId)) : null;
      const pendingCredit = sale.method === 'Credito'
         ? Math.max((Number(sale.total) || 0) - (Number(sale.paidAmount) || 0), 0)
@@ -1853,31 +1955,35 @@
                 }
             </style>
         </head>
-        <body>
-            <div style="text-align:center; font-weight:bold;">
+        <body style="font-size:13px; line-height:1.4;">
+            <div style="text-align:center; font-weight:700; font-size:15px;">
                 ${db.invoiceSettings.businessName || 'Negocio'}<br>
-                ${db.invoiceSettings.ownerName ? `<span style=\"font-size:10px;\">${db.invoiceSettings.ownerName}</span><br>` : ''}
-                ${db.invoiceSettings.phone ? `<span style=\"font-size:10px;\">${db.invoiceSettings.phone}</span><br>` : ''}
-                ${db.invoiceSettings.address ? `<span style=\"font-size:10px;\">${db.invoiceSettings.address}</span>` : ''}
+                ${db.invoiceSettings.ownerName ? `<span style=\"font-size:12px; font-weight:600;\">${db.invoiceSettings.ownerName}</span><br>` : ''}
+                ${db.invoiceSettings.phone ? `<span style=\"font-size:12px; font-weight:600;\">${db.invoiceSettings.phone}</span><br>` : ''}
+                ${db.invoiceSettings.address ? `<span style=\"font-size:12px; font-weight:600;\">${db.invoiceSettings.address}</span>` : ''}
             </div>
             <hr>
-            Fecha: ${new Date(sale.date).toLocaleString()}<br>
-            Ticket #: ${sale.id.substr(-6)}<br>
+            <b>Fecha:</b> ${new Date(sale.date).toLocaleString()}<br>
+            <b>Ticket #:</b> ${sale.id.substr(-6)}<br>
             <hr>
             ${itemsHtml}
             <hr>
-            Subtotal: ${formatMoney(subtotal)}<br>
-            Descuento: ${formatMoney(sale.discount || 0)}<br>
-            <b>TOTAL: ${formatMoney(sale.total)}</b><br>
-            Pago: ${sale.method}<br>
-            ${creditClient ? `Cliente: ${creditClient.name}<br>` : ''}
-            ${sale.method === 'Credito' ? `Saldo pendiente: ${formatMoney(pendingCredit)}<br>` : ''}
+            <b>Subtotal:</b> ${formatMoney(subtotal)}<br>
+            <b>Descuento:</b> ${formatMoney(sale.discount || 0)}<br>
+            <b style="font-size:15px;">TOTAL: ${formatMoney(sale.total)}</b><br>
+            <b>Pago:</b> ${sale.method}<br>
+            ${creditClient ? `<b>Cliente:</b> ${creditClient.name}<br>` : ''}
+            ${sale.method === 'Credito' ? `<b>Saldo pendiente:</b> ${formatMoney(pendingCredit)}<br>` : ''}
             <br>
-            ${db.invoiceSettings.footer || 'Gracias por su compra'}
+            <b style="font-size:14px;">${db.invoiceSettings.footer || 'Gracias por su compra'}</b>
         </body>
         </html>
     `;
+    return html;
+}
 
+        function printTicket(sale) {
+    const html = sale.invoiceHtml || buildInvoiceHtml(sale);
     const printWindow = window.open('', '_blank', 'width=300,height=600');
     printWindow.document.write(html);
     printWindow.document.close();
@@ -1888,6 +1994,16 @@
         printWindow.close();
     }, 300);
 }
+
+        function viewSaleInvoice(saleId) {
+            const sale = db.sales.find(s => String(s.id) === String(saleId));
+            if (!sale) return showToast('Factura no encontrada', 'error');
+            const html = sale.invoiceHtml || buildInvoiceHtml(sale);
+            const invoiceWindow = window.open('', '_blank', 'width=380,height=700');
+            invoiceWindow.document.write(html);
+            invoiceWindow.document.close();
+            invoiceWindow.focus();
+        }
 
         // --- INVENTORY, CLIENTS, ADMIN RE-RENDER (Adaptación estilo oscuro) ---
         // Se mantienen estructuras pero con clases oscuras en las funciones ya definidas arriba
@@ -1942,9 +2058,14 @@
                                         <td class="p-3 text-right font-bold text-amber-500">${formatMoney(s.total)}</td>
                                         <td class="p-3"><span class="bg-slate-700 px-2 py-1 rounded text-xs">${s.method}</span></td>
                                         <td class="p-3 text-center">
-                                            <button onclick="deleteSale('${s.id}')" class="text-red-500 hover:text-red-400" title="Eliminar venta">
-                                                <i class="fas fa-trash"></i>
-                                            </button>
+                                            <div class="flex items-center justify-center gap-3">
+                                                <button onclick="viewSaleInvoice('${s.id}')" class="text-amber-500 hover:text-amber-400" title="Ver factura">
+                                                    <i class="fas fa-file-invoice"></i>
+                                                </button>
+                                                <button onclick="deleteSale('${s.id}')" class="text-red-500 hover:text-red-400" title="Eliminar venta">
+                                                    <i class="fas fa-trash"></i>
+                                                </button>
+                                            </div>
                                         </td>
                                     </tr>
                                 `).join('')}
@@ -2644,7 +2765,8 @@ function exportProfitsReport(format = 'pdf') {
         })),
         total: Number(sale.total) || 0,
         discount: Number(sale.discount) || 0,
-        paidAmount: Number(sale.paidAmount) || 0
+        paidAmount: Number(sale.paidAmount) || 0,
+        invoiceHtml: typeof sale.invoiceHtml === 'string' ? sale.invoiceHtml : ''
     }));
 
     normalized.creditPayments = (normalized.creditPayments || []).map((payment) => ({
@@ -2656,6 +2778,7 @@ function exportProfitsReport(format = 'pdf') {
     if (!Array.isArray(normalized.caja.history)) normalized.caja.history = [];
     if (normalized.caja.creditPaymentSession === undefined) normalized.caja.creditPaymentSession = 0;
     if (normalized.caja.expenseSession === undefined) normalized.caja.expenseSession = 0;
+    if (!Array.isArray(normalized.openTickets)) normalized.openTickets = [];
 
     return normalized;
 }
