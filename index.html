@@ -629,13 +629,6 @@
 };
                 newProd.sellPrice = newProd.sellPrices[0];
 
-                const normalizedCode = normalizeText((newProd.code || '').trim());
-                const duplicateCode = db.products.find((p) => normalizeText((p.code || '').trim()) === normalizedCode && p.id !== productEditing);
-                if (duplicateCode) {
-                    alert('Ya existe un producto con ese código.');
-                    return;
-                }
-
              if (productEditing) {
     const index = db.products.findIndex(p => p.id === productEditing);
     if (index !== -1) {
@@ -1100,17 +1093,8 @@
             ];
             
             if(existing) {
-                const available = getAvailableStock(prodId);
-                if (available < (existing.qtyStep || 0.001)) {
-                    showToast(`Stock insuficiente para ${prod.name}`, 'error');
-                    return;
-                }
                 existing.qty = Number((existing.qty + existing.qtyStep).toFixed(3));
             } else {
-                if ((Number(prod.stock) || 0) <= 0) {
-                    showToast(`Sin stock disponible para ${prod.name}`, 'error');
-                    return;
-                }
                 currentCart.push({
                     id: prod.id,
                     name: prod.name,
@@ -1380,14 +1364,9 @@
             const total = rawTotal - discount;
             const change = payAmount - total;
 
-            const stockError = currentCart.find((item) => {
-                const product = db.products.find(prod => String(prod.id) === String(item.id));
-                const available = Number(product?.stock) || 0;
-                return !product || available < (Number(item.qty) || 0);
-            });
-            if (stockError) {
-                const prodName = stockError?.name || 'producto';
-                showToast(`No se puede vender ${prodName}: stock insuficiente`, 'error');
+            const missingProduct = currentCart.find((item) => !db.products.find(prod => String(prod.id) === String(item.id)));
+            if (missingProduct) {
+                showToast('No se pudo procesar la venta: hay productos que ya no existen.', 'error');
                 navigate('pos');
                 return;
             }
@@ -1678,6 +1657,21 @@
             }
         }
 
+        function renderPurchaseProductOptions(selectEl, query = '') {
+            if (!selectEl) return;
+            const normalizedQuery = normalizeText((query || '').trim());
+            const filteredProducts = db.products.filter((product) => {
+                if (!normalizedQuery) return true;
+                const searchable = `${product.code || ''} ${product.name || ''}`;
+                return normalizeText(searchable).includes(normalizedQuery);
+            });
+
+            selectEl.innerHTML = `
+                <option value="">Selecciona producto</option>
+                ${filteredProducts.map((p) => `<option value="${p.id}">${p.code || 'SIN-CODIGO'} · ${p.name}</option>`).join('')}
+            `;
+        }
+
         function addPurchaseItemRow() {
             const purchaseItemsEl = document.getElementById('purchase-items');
             if (!purchaseItemsEl) return;
@@ -1686,10 +1680,8 @@
             row.innerHTML = `
                 <div class="col-span-6">
                     <label class="text-[10px] text-slate-500">Producto</label>
-                    <select class="purchase-product w-full rounded p-2 text-xs">
-                        <option value="">Selecciona producto</option>
-                        ${db.products.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}
-                    </select>
+                    <input type="text" class="purchase-product-search w-full rounded p-2 text-xs mb-1" placeholder="Buscar por código o nombre">
+                    <select class="purchase-product w-full rounded p-2 text-xs"></select>
                 </div>
                 <div class="col-span-2">
                     <label class="text-[10px] text-slate-500">Cant.</label>
@@ -1706,6 +1698,18 @@
                 </div>
             `;
             purchaseItemsEl.appendChild(row);
+
+            const searchInput = row.querySelector('.purchase-product-search');
+            const productSelect = row.querySelector('.purchase-product');
+            renderPurchaseProductOptions(productSelect, '');
+
+            if (searchInput) {
+                searchInput.addEventListener('input', () => {
+                    const currentValue = productSelect?.value || '';
+                    renderPurchaseProductOptions(productSelect, searchInput.value);
+                    if (currentValue) productSelect.value = currentValue;
+                });
+            }
         }
 
         function removePurchaseItemRow(btn) {
