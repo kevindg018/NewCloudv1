@@ -629,13 +629,6 @@
 };
                 newProd.sellPrice = newProd.sellPrices[0];
 
-                const normalizedCode = normalizeText((newProd.code || '').trim());
-                const duplicateCode = db.products.find((p) => normalizeText((p.code || '').trim()) === normalizedCode && p.id !== productEditing);
-                if (duplicateCode) {
-                    alert('Ya existe un producto con ese código.');
-                    return;
-                }
-
              if (productEditing) {
     const index = db.products.findIndex(p => p.id === productEditing);
     if (index !== -1) {
@@ -1100,17 +1093,8 @@
             ];
             
             if(existing) {
-                const available = getAvailableStock(prodId);
-                if (available < (existing.qtyStep || 0.001)) {
-                    showToast(`Stock insuficiente para ${prod.name}`, 'error');
-                    return;
-                }
                 existing.qty = Number((existing.qty + existing.qtyStep).toFixed(3));
             } else {
-                if ((Number(prod.stock) || 0) <= 0) {
-                    showToast(`Sin stock disponible para ${prod.name}`, 'error');
-                    return;
-                }
                 currentCart.push({
                     id: prod.id,
                     name: prod.name,
@@ -1380,14 +1364,9 @@
             const total = rawTotal - discount;
             const change = payAmount - total;
 
-            const stockError = currentCart.find((item) => {
-                const product = db.products.find(prod => String(prod.id) === String(item.id));
-                const available = Number(product?.stock) || 0;
-                return !product || available < (Number(item.qty) || 0);
-            });
-            if (stockError) {
-                const prodName = stockError?.name || 'producto';
-                showToast(`No se puede vender ${prodName}: stock insuficiente`, 'error');
+            const missingProduct = currentCart.find((item) => !db.products.find(prod => String(prod.id) === String(item.id)));
+            if (missingProduct) {
+                showToast('No se pudo procesar la venta: hay productos que ya no existen.', 'error');
                 navigate('pos');
                 return;
             }
