@@ -1657,6 +1657,21 @@
             }
         }
 
+        function renderPurchaseProductOptions(selectEl, query = '') {
+            if (!selectEl) return;
+            const normalizedQuery = normalizeText((query || '').trim());
+            const filteredProducts = db.products.filter((product) => {
+                if (!normalizedQuery) return true;
+                const searchable = `${product.code || ''} ${product.name || ''}`;
+                return normalizeText(searchable).includes(normalizedQuery);
+            });
+
+            selectEl.innerHTML = `
+                <option value="">Selecciona producto</option>
+                ${filteredProducts.map((p) => `<option value="${p.id}">${p.code || 'SIN-CODIGO'} · ${p.name}</option>`).join('')}
+            `;
+        }
+
         function addPurchaseItemRow() {
             const purchaseItemsEl = document.getElementById('purchase-items');
             if (!purchaseItemsEl) return;
@@ -1665,10 +1680,8 @@
             row.innerHTML = `
                 <div class="col-span-6">
                     <label class="text-[10px] text-slate-500">Producto</label>
-                    <select class="purchase-product w-full rounded p-2 text-xs">
-                        <option value="">Selecciona producto</option>
-                        ${db.products.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}
-                    </select>
+                    <input type="text" class="purchase-product-search w-full rounded p-2 text-xs mb-1" placeholder="Buscar por código o nombre">
+                    <select class="purchase-product w-full rounded p-2 text-xs"></select>
                 </div>
                 <div class="col-span-2">
                     <label class="text-[10px] text-slate-500">Cant.</label>
@@ -1685,6 +1698,18 @@
                 </div>
             `;
             purchaseItemsEl.appendChild(row);
+
+            const searchInput = row.querySelector('.purchase-product-search');
+            const productSelect = row.querySelector('.purchase-product');
+            renderPurchaseProductOptions(productSelect, '');
+
+            if (searchInput) {
+                searchInput.addEventListener('input', () => {
+                    const currentValue = productSelect?.value || '';
+                    renderPurchaseProductOptions(productSelect, searchInput.value);
+                    if (currentValue) productSelect.value = currentValue;
+                });
+            }
         }
 
         function removePurchaseItemRow(btn) {
