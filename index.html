@@ -430,8 +430,8 @@
         // --- VISTA DASHBOARD ---
         function renderDashboard(container) {
             const today = new Date().toDateString();
-            const salesToday = db.sales.filter(s => new Date(s.date).toDateString() === today);
-            const totalVentasHoy = salesToday.reduce((acc, s) => acc + s.total, 0);
+            const salesToday = getSalesInRange(currentProfitRange);
+            const totalVentasHoy = salesToday.reduce((acc, s) => acc + (Number(s.total) || 0), 0);
             
             const expensesToday = db.expenses.filter(e => new Date(e.date).toDateString() === today);
             const totalGastosHoy = expensesToday.reduce((acc, e) => acc + e.amount, 0);
@@ -2055,7 +2055,7 @@
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-slate-700">
-                                ${db.sales.slice(-15).reverse().map(s => `
+                                ${db.sales.slice().reverse().map(s => `
                                     <tr class="hover:bg-slate-700/50">
                                         <td class="p-3">${new Date(s.date).toLocaleDateString()}</td>
                                      <td class="p-3 text-xs text-slate-400">${s.items.length} items • ${s.items.map(item => item.name).join(', ')} (Ref: ${s.id.substr(-4)})</td>
@@ -2149,10 +2149,12 @@
 
         function exportToExcel() {
             const data = db.sales.map(s => ({
-                Fecha: new Date(s.date).toLocaleDateString(),
-               Total: s.total,
+                Fecha: new Date(s.date).toLocaleString(),
+                Factura: String(s.id || '').slice(-8),
                 Metodo: s.method,
-                Vendedor: s.user
+                Total: Number(s.total) || 0,
+                Vendedor: s.user,
+                Productos: (s.items || []).map(it => `${it.name} x${formatQty(it.qty)}`).join(' | ')
             }));
             const ws = XLSX.utils.json_to_sheet(data);
             const wb = XLSX.utils.book_new();
@@ -2451,6 +2453,39 @@ function getTopProducts(sales) {
     return Object.values(counts).sort((a, b) => b.qty - a.qty).slice(0, 5);
 }
 
+function getRangeStartDate(range = 'today') {
+    const startDate = new Date();
+    if (range === 'today') {
+        startDate.setHours(0, 0, 0, 0);
+    } else if (range === 'week') {
+        const day = startDate.getDay() || 7;
+        startDate.setDate(startDate.getDate() - (day - 1));
+        startDate.setHours(0, 0, 0, 0);
+    } else if (range === 'month') {
+        startDate.setDate(1);
+        startDate.setHours(0, 0, 0, 0);
+    }
+    return startDate;
+}
+
+function getSalesInRange(range = 'today') {
+    const startDate = getRangeStartDate(range);
+    return (db.sales || []).filter(s => new Date(s.date) >= startDate);
+}
+
+function getProductSalesStats(sales) {
+    const map = {};
+    sales.forEach((sale) => {
+        (sale.items || []).forEach((item) => {
+            if (!map[item.name]) map[item.name] = { name: item.name, qty: 0, total: 0 };
+            map[item.name].qty += Number(item.qty) || 0;
+            map[item.name].total += (Number(item.qty) || 0) * (Number(item.price) || 0);
+        });
+    });
+    const sorted = Object.values(map).sort((a, b) => b.qty - a.qty);
+    return { most: sorted[0] || null, least: sorted[sorted.length - 1] || null, list: sorted };
+}
+
 // --- MÓDULO DE GANANCIAS CORREGIDO ---
 let currentProfitRange = 'today';
 
@@ -2553,8 +2588,7 @@ function renderProfits(container) {
 }
 
 function getSalesOfToday() {
-    const today = new Date().toDateString();
-    return (db.sales || []).filter(s => new Date(s.date).toDateString() === today);
+    return getSalesInRange(currentProfitRange);
 }
 
 function exportDailySalesReport(format = 'pdf') {
@@ -2636,9 +2670,13 @@ function exportDailySalesReport(format = 'pdf') {
         return;
     }
 
+    const productStats = getProductSalesStats(salesToday);
+    resumenRows.push(['Producto más vendido', productStats.most ? `${productStats.most.name} (x${formatQty(productStats.most.qty)})` : 'N/A']);
+    resumenRows.push(['Producto menos vendido', productStats.least ? `${productStats.least.name} (x${formatQty(productStats.least.qty)})` : 'N/A']);
+
     const doc = new jspdf.jsPDF({ orientation: 'landscape' });
     doc.setFontSize(15);
-    doc.text('Reporte detallado de ventas del día', 148, 15, null, null, 'center');
+    doc.text(`Reporte detallado de ventas (${currentProfitRange})`, 148, 15, null, null, 'center');
     doc.setFontSize(10);
     doc.text(`Fecha: ${today.toLocaleDateString()}`, 10, 24);
     doc.text(`Usuario: ${db.currentUser?.name || 'Sistema'}`, 10, 30);
@@ -2704,9 +2742,20 @@ function exportProfitsReport(format = 'pdf') {
             { Concepto: 'Gastos', Valor: formatMoney(totalExpenses) },
             { Concepto: 'Ganancia neta', Valor: formatMoney(netProfit) }
         ];
+        const productStats = getProductSalesStats(salesInPeriod);
+        data.push({ Concepto: 'Producto más vendido', Valor: productStats.most ? `${productStats.most.name} (x${formatQty(productStats.most.qty)})` : 'N/A' });
+        data.push({ Concepto: 'Producto menos vendido', Valor: productStats.least ? `${productStats.least.name} (x${formatQty(productStats.least.qty)})` : 'N/A' });
+        const detailSales = salesInPeriod.map((sale) => ({
+            Fecha: new Date(sale.date).toLocaleString(),
+            Factura: String(sale.id || '').slice(-8),
+            Metodo: sale.method || 'N/A',
+            Total: Number(sale.total) || 0,
+            Productos: (sale.items || []).map(it => `${it.name} x${formatQty(it.qty)}`).join(' | ')
+        }));
         const ws = XLSX.utils.json_to_sheet(data);
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, 'Ganancias');
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detailSales), 'VentasDetalladas');
         XLSX.writeFile(wb, `Ganancias_${periodTitle}_${new Date().toISOString().slice(0,10)}.xlsx`);
         showToast('Reporte de ganancias (Excel) generado');
         return;
@@ -2719,6 +2768,7 @@ function exportProfitsReport(format = 'pdf') {
     doc.text(`Periodo: ${periodTitle}`, 10, 24);
     doc.text(`Generado: ${new Date().toLocaleString()}`, 10, 30);
 
+    const productStats = getProductSalesStats(salesInPeriod);
     doc.autoTable({
         startY: 36,
         head: [['Concepto', 'Valor']],
@@ -2726,10 +2776,20 @@ function exportProfitsReport(format = 'pdf') {
             ['Ventas', formatMoney(totalRevenue)],
             ['Costo de ventas', formatMoney(totalCost)],
             ['Gastos', formatMoney(totalExpenses)],
-            ['Ganancia neta', formatMoney(netProfit)]
+            ['Ganancia neta', formatMoney(netProfit)],
+            ['Producto más vendido', productStats.most ? `${productStats.most.name} (x${formatQty(productStats.most.qty)})` : 'N/A'],
+            ['Producto menos vendido', productStats.least ? `${productStats.least.name} (x${formatQty(productStats.least.qty)})` : 'N/A']
         ],
         styles: { fontSize: 10 },
         columnStyles: { 1: { halign: 'right', fontStyle: 'bold' } }
+    });
+
+    const salesRows = salesInPeriod.map((sale, idx) => [idx + 1, new Date(sale.date).toLocaleString(), sale.method || 'N/A', formatMoney(sale.total), (sale.items || []).map(it => `${it.name} x${formatQty(it.qty)}`).join(' | ')]);
+    doc.autoTable({
+        startY: doc.lastAutoTable.finalY + 8,
+        head: [['#', 'Fecha', 'Método', 'Total', 'Productos']],
+        body: salesRows.length ? salesRows : [['-', '-', '-', '-', 'Sin ventas']],
+        styles: { fontSize: 8 }
     });
 
     doc.save(`Ganancias_${periodTitle}_${new Date().toISOString().slice(0,10)}.pdf`);
