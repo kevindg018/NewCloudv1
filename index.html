@@ -311,6 +311,41 @@
                 .replace(/[\u0300-\u036f]/g, '');
         }
         // --- SISTEMA DE AUTENTICACIÓN ---
+        function isCashierUser() {
+            return db.currentUser?.role === 'cajero';
+        }
+
+        function canAccessView(view) {
+            if (!isCashierUser()) return true;
+            return view === 'pos';
+        }
+
+        function getDefaultViewForCurrentUser() {
+            return isCashierUser() ? 'pos' : 'dashboard';
+        }
+
+        function applyRolePermissions() {
+            document.querySelectorAll('.nav-item').forEach((item) => {
+                const target = item.getAttribute('onclick') || '';
+                const isAllowed = !isCashierUser() || target.includes("'pos'") || target.includes('"pos"');
+                item.classList.toggle('hidden', !isAllowed);
+            });
+
+            ['exportarDatos', 'importarDatos'].forEach((id) => {
+                const el = document.getElementById(id);
+                if (el) el.classList.toggle('hidden', isCashierUser());
+            });
+        }
+
+        function escapeHtml(value = '') {
+            return String(value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
         const loginScreen = document.getElementById('login-screen');
         const appLayout = document.getElementById('app-layout');
         const loginForm = document.getElementById('login-form');
@@ -360,8 +395,9 @@
                 document.getElementById('user-role-display').innerText = foundUser.role.toUpperCase();
                 loginScreen.classList.add('hidden');
                 appLayout.classList.remove('hidden');
+                applyRolePermissions();
                 updateCajaStatus();
-                navigate('dashboard');
+                navigate(getDefaultViewForCurrentUser());
             } else {
                 showToast('Credenciales incorrectas', 'error');
             }
@@ -375,6 +411,10 @@
 
         // --- NAVEGACIÓN ---
         function navigate(view) {
+            if (!canAccessView(view)) {
+                showToast('El usuario cajero solo puede usar Caja / Ventas', 'error');
+                view = 'pos';
+            }
             closeMobileMenu();
             const content = document.getElementById('content-area');
             const title = document.getElementById('page-title');
@@ -2000,6 +2040,7 @@
             <b style="font-size:15px;">TOTAL: ${formatMoney(sale.total)}</b><br>
             <b>Pago:</b> ${sale.method}<br>
             ${creditClient ? `<b>Cliente:</b> ${creditClient.name}<br>` : ''}
+            ${sale.method === 'Credito' ? `<b>Abonado:</b> ${formatMoney(sale.paidAmount || 0)}<br>` : ''}
             ${sale.method === 'Credito' ? `<b>Saldo pendiente:</b> ${formatMoney(pendingCredit)}<br>` : ''}
             <br>
             <b style="font-size:14px;">${db.invoiceSettings.footer || 'Gracias por su compra'}</b>
@@ -2010,7 +2051,7 @@
 }
 
         function printTicket(sale) {
-    const html = sale.invoiceHtml || buildInvoiceHtml(sale);
+    const html = sale.method === 'Credito' ? buildInvoiceHtml(sale) : (sale.invoiceHtml || buildInvoiceHtml(sale));
     const printWindow = window.open('', '_blank', 'width=300,height=600');
     printWindow.document.write(html);
     printWindow.document.close();
@@ -2025,7 +2066,7 @@
         function viewSaleInvoice(saleId) {
             const sale = db.sales.find(s => String(s.id) === String(saleId));
             if (!sale) return showToast('Factura no encontrada', 'error');
-            const html = sale.invoiceHtml || buildInvoiceHtml(sale);
+            const html = sale.method === 'Credito' ? buildInvoiceHtml(sale) : (sale.invoiceHtml || buildInvoiceHtml(sale));
             const invoiceWindow = window.open('', '_blank', 'width=380,height=700');
             invoiceWindow.document.write(html);
             invoiceWindow.document.close();
@@ -2250,6 +2291,7 @@
                                     <th class="p-3">Cliente</th>
                                     <th class="p-3 text-right">Total</th>
                                     <th class="p-3 text-right">Pendiente</th>
+                                    <th class="p-3 text-center">Factura</th>
                                     <th class="p-3 text-center">Abonar</th>
                                 </tr>
                             </thead>
@@ -2260,6 +2302,9 @@
                                         <td class="p-3 font-bold">${sale.client?.name || 'Cliente eliminado'}</td>
                                         <td class="p-3 text-right">${formatMoney(sale.total)}</td>
                                         <td class="p-3 text-right text-red-400 font-bold">${formatMoney(sale.pending)}</td>
+                                        <td class="p-3 text-center">
+                                            <button onclick="openCreditInvoiceModal('${sale.id}')" class="bg-slate-700 hover:bg-slate-600 text-amber-400 px-3 py-1 rounded text-xs border border-slate-600"><i class="fas fa-file-invoice mr-1"></i>Ver</button>
+                                        </td>
                                         <td class="p-3 text-center">
                                             <button onclick="addPayment('${sale.clientId}')" class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded text-xs">Abonar</button>
                                         </td>
@@ -2284,6 +2329,83 @@
                 renderClients(container);
                 showToast('Cliente registrado');
             });
+        }
+
+        function openCreditInvoiceModal(saleId) {
+            const sale = (db.sales || []).find(s => String(s.id) === String(saleId));
+            if (!sale) return showToast('Factura no encontrada', 'error');
+
+            const client = db.clients.find(c => String(c.id) === String(sale.clientId));
+            const total = Number(sale.total) || 0;
+            const paid = Number(sale.paidAmount) || 0;
+            const pending = Math.max(total - paid, 0);
+            const subtotal = (sale.items || []).reduce((acc, item) => acc + ((Number(item.qty) || 0) * (Number(item.price) || 0)), 0);
+
+            const rows = (sale.items || []).map((item) => {
+                const qty = Number(item.qty) || 0;
+                const price = Number(item.price) || 0;
+                return `
+                    <tr class="border-b border-slate-200">
+                        <td class="py-2 pr-2">${escapeHtml(item.name || 'Producto')}</td>
+                        <td class="py-2 px-2 text-right">${formatQty(qty)}</td>
+                        <td class="py-2 px-2 text-right">${formatMoney(price)}</td>
+                        <td class="py-2 pl-2 text-right font-semibold">${formatMoney(qty * price)}</td>
+                    </tr>
+                `;
+            }).join('');
+
+            const modalHTML = `
+                <div id="credit-invoice-modal" class="fixed inset-0 bg-slate-950/80 flex items-center justify-center z-50 p-4">
+                    <div class="bg-slate-100 text-slate-950 rounded-xl w-full max-w-2xl shadow-2xl overflow-hidden">
+                        <div class="bg-slate-900 text-white p-4 flex justify-between items-center no-print">
+                            <h2 class="font-bold text-lg"><i class="fas fa-file-invoice mr-2 text-amber-400"></i>Factura de fiado</h2>
+                            <button onclick="document.getElementById('credit-invoice-modal').remove()" class="text-slate-300 hover:text-white"><i class="fas fa-xmark text-xl"></i></button>
+                        </div>
+                        <div id="credit-invoice-content" class="p-6 bg-white text-black max-h-[75vh] overflow-auto">
+                            <div class="text-center border-b border-slate-300 pb-3 mb-4">
+                                <h3 class="text-xl font-bold">${escapeHtml(db.invoiceSettings.businessName || 'Negocio')}</h3>
+                                ${db.invoiceSettings.ownerName ? `<p class="text-sm">${escapeHtml(db.invoiceSettings.ownerName)}</p>` : ''}
+                                ${db.invoiceSettings.phone ? `<p class="text-sm">${escapeHtml(db.invoiceSettings.phone)}</p>` : ''}
+                                ${db.invoiceSettings.address ? `<p class="text-sm">${escapeHtml(db.invoiceSettings.address)}</p>` : ''}
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-3 text-sm mb-4">
+                                <div><b>Factura:</b> ${escapeHtml(String(sale.id || '').slice(-8))}</div>
+                                <div class="text-right"><b>Fecha:</b> ${new Date(sale.date).toLocaleString()}</div>
+                                <div><b>Cliente:</b> ${escapeHtml(client?.name || 'Cliente eliminado')}</div>
+                                <div class="text-right"><b>Documento:</b> ${escapeHtml(client?.cedula || 'Sin documento')}</div>
+                                ${client?.phone ? `<div><b>Telefono:</b> ${escapeHtml(client.phone)}</div>` : ''}
+                                ${client?.address ? `<div class="text-right"><b>Direccion:</b> ${escapeHtml(client.address)}</div>` : ''}
+                            </div>
+
+                            <table class="w-full text-sm border-t border-slate-300">
+                                <thead>
+                                    <tr class="border-b border-slate-300 text-slate-600">
+                                        <th class="py-2 pr-2 text-left">Producto</th>
+                                        <th class="py-2 px-2 text-right">Cant.</th>
+                                        <th class="py-2 px-2 text-right">Precio</th>
+                                        <th class="py-2 pl-2 text-right">Total</th>
+                                    </tr>
+                                </thead>
+                                <tbody>${rows || '<tr><td colspan="4" class="py-4 text-center text-slate-500">Sin productos</td></tr>'}</tbody>
+                            </table>
+
+                            <div class="mt-5 ml-auto max-w-xs text-sm space-y-2">
+                                <div class="flex justify-between"><span>Subtotal</span><b>${formatMoney(subtotal)}</b></div>
+                                <div class="flex justify-between"><span>Descuento</span><b>${formatMoney(sale.discount || 0)}</b></div>
+                                <div class="flex justify-between text-base border-t border-slate-300 pt-2"><span>Total factura</span><b>${formatMoney(total)}</b></div>
+                                <div class="flex justify-between text-emerald-700"><span>Abonado</span><b>${formatMoney(paid)}</b></div>
+                                <div class="flex justify-between text-lg text-red-700 border-t border-slate-300 pt-2"><span>Debe</span><b>${formatMoney(pending)}</b></div>
+                            </div>
+                        </div>
+                        <div class="bg-slate-100 p-4 flex justify-end gap-3 no-print">
+                            <button onclick="document.getElementById('credit-invoice-modal').remove()" class="px-4 py-2 rounded bg-slate-300 hover:bg-slate-400 font-bold">Cerrar</button>
+                            <button onclick="printTicket(db.sales.find(s => String(s.id) === String('${sale.id}')))" class="px-4 py-2 rounded bg-amber-500 hover:bg-amber-400 text-slate-900 font-bold"><i class="fas fa-print mr-2"></i>Imprimir</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.insertAdjacentHTML('beforeend', modalHTML);
         }
 
         function addPayment(clientId) {
@@ -2882,6 +3004,10 @@ function exportProfitsReport(format = 'pdf') {
 }
 
         document.getElementById("exportarDatos").addEventListener("click", () => {
+    if (isCashierUser()) {
+        showToast('El usuario cajero no puede exportar datos', 'error');
+        return;
+    }
     const dbToExport = localStorage.getItem(DB_KEY);
     if (!dbToExport) {
         alert("⚠️ No hay datos para exportar.");
@@ -2909,6 +3035,10 @@ function exportProfitsReport(format = 'pdf') {
 });
 
 document.getElementById("importarDatos").addEventListener("click", () => {
+  if (isCashierUser()) {
+    showToast('El usuario cajero no puede importar datos', 'error');
+    return;
+  }
   document.getElementById("importarArchivo").click();
 });
 
